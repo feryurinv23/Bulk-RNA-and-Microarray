@@ -1,0 +1,82 @@
+# Load required libraries
+library(GEOquery)    # For retrieving GEO datasets
+library(dplyr)       # For data manipulation
+library(openxlsx)    # For exporting data to Excel
+library(pheatmap)    # For creating heatmaps
+library(limma)       # For differential expression analysis
+
+# Download dataset directly from GEO ----
+# This function imports all the data available from the study, including annotations and metadata
+my_id <- "GSE38537"
+gse <- getGEO(my_id)
+
+# Check how many sequencing platforms were used ----
+# Some GEO datasets are derived from multiple microarray platforms
+length(gse) # Number of platforms
+gse <- gse[[1]] # Select the first platform
+gse # Display platform details
+
+# Extract useful data
+pData(gse)    # Sample information (metadata)
+fData(gse)    # Gene annotations
+exprs(gse)    # Expression data
+
+# Check normalization ----
+# Visualize descriptive statistics for expression data across samples
+boxplot(exprs(gse)) # Original distribution
+exprs(gse) <- log2(exprs(gse)) # Apply log2 transformation
+boxplot(exprs(gse), outline = FALSE) # Transformed data distribution
+exprs(gse)[is.na(exprs(gse))] <- 0 # Replace NA values with 0
+
+# Use metadata information ----
+sampleInfo <- pData(gse) # Extract metadata
+View(sampleInfo)         # Inspect the metadata
+colnames(sampleInfo)     # Check column names
+
+# Select and rename a specific column
+sampleInfo <- select(sampleInfo, `disease status:ch1`)
+sampleInfo <- rename(sampleInfo, group = `disease status:ch1`) # Rename column to 'group'
+head(sampleInfo) # Preview the modified metadata
+
+# Export metadata to Excel
+write.xlsx(sampleInfo, "metadata.xlsx")
+
+# Analyze sample behavior ----
+# Correlation matrix to examine the relationship between expression profiles across samples
+corMatrix <- cor(exprs(gse), method = 'spearman') # Spearman correlation
+pheatmap(corMatrix) # Visualize the correlation matrix
+
+# Annotate rows of the correlation matrix with sample metadata
+rownames(sampleInfo) <- colnames(corMatrix)
+pheatmap(corMatrix, annotation_col = sampleInfo)
+
+# Export expression and annotation data ----
+full_output <- cbind(fData(gse), exprs(gse)) # Combine gene annotations with expression data
+write.xlsx(full_output, "counts_table_GSE38537.xlsx")
+
+# Differential expression analysis ----
+# Create a design matrix for the analysis
+design <- model.matrix(~0 + sampleInfo$group)
+View(design)
+colnames(design) <- c("asymptomatic", "control", "HAM") # Rename group columns
+
+# Check summary statistics of the expression data
+summary(exprs(gse))
+
+# Fit a linear model for expression data
+fit <- lmFit(exprs(gse), design) # Linear model fit
+head(fit$coefficients)
+
+# Define contrasts for the differential expression analysis
+condition <- makeContrasts(asymptomatic - control, levels = design)
+levels(design)
+fit <- contrasts.fit(fit, condition) # Apply contrasts
+
+# Apply empirical Bayes to get differential expression statistics and p-values
+fit <- eBayes(fit)
+topTable(fit) # Top significant genes
+topTable(fit, coef = 1) # Results for the first contrast
+data <- topTable(fit, coef = 1, number = nrow(exprs(gse))) # Retrieve all results
+
+# Export differential expression results to Excel
+write.xlsx(data, "Limma_output_asymptomatic_vs_control_GSE38537.xlsx", row.names = TRUE)
