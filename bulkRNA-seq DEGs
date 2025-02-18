@@ -1,0 +1,79 @@
+# Load required libraries
+library(openxlsx)  # For working with Excel files
+library(org.Hs.eg.db)  # For gene ID conversion (Human)
+library(DESeq2)  # For differential expression analysis
+
+# Create a directory to save the results
+outDir <- "Results"  # Name of the output directory
+dir.create(outDir, showWarnings = FALSE)  # Create the directory (ignore warning if it already exists)
+
+# Import gene expression data
+# The file must have genes as rows and samples as columns
+data <- openxlsx::read.xlsx("Tempo_0h.xlsx", rowNames = TRUE)  # Read data from Excel
+rownames(data) <- data$ensembl_gene_id  # Set row names to gene IDs
+
+# Define experimental conditions (groups) in the same order as the dataset columns
+# Example: 12 samples of "career" and 3 samples of "normal"
+condition <- factor(c(rep("career", 12), rep("normal", 3)), levels = c("career", "normal"))
+# "career" will be the reference group (DOWN), and "normal" will be the compared group (UP)
+
+# Create a sample metadata table
+sampleTable <- data.frame(condition = as.factor(condition))
+rownames(sampleTable) <- colnames(data)
+
+# Create DESeq2 object
+deseq <- DESeqDataSetFromMatrix(countData = data,
+                                colData = sampleTable,
+                                design = ~condition)
+
+# Perform differential expression analysis
+d.deseq <- DESeq(deseq)
+
+# Extract results from the DESeq2 analysis
+res_deseq <- results(d.deseq)
+
+# Save complete results to an Excel file
+openxlsx::write.xlsx(as.data.frame(res_deseq), file.path(outDir, "DEGS_atl_career.xlsx"), rowNames = TRUE)
+
+# Order results by adjusted p-value (padj)
+resOrdered <- res_deseq[order(res_deseq$padj), ]
+
+# Filter significant genes (padj < 0.05)
+resSig <- subset(resOrdered, padj < 0.05)
+
+# Order significant genes by log2FoldChange
+resl2fc <- resSig[order(resSig$log2FoldChange), ]
+
+# Filter genes with relevant fold changes
+resl2fc_up <- subset(resl2fc, log2FoldChange > 1)  # UP-regulated genes (log2FC > 1)
+resl2fc_down <- subset(resl2fc, log2FoldChange < -1)  # DOWN-regulated genes (log2FC < -1)
+
+# Save results to Excel files
+openxlsx::write.xlsx(as.data.frame(resl2fc), file.path(outDir, "significant_ATL_career.xlsx"), rowNames = TRUE)
+openxlsx::write.xlsx(as.data.frame(resl2fc_up), file.path(outDir, "transcripts_up_career.xlsx"), rowNames = TRUE)
+openxlsx::write.xlsx(as.data.frame(resl2fc_down), file.path(outDir, "transcripts_down_career.xlsx"), rowNames = TRUE)
+
+# Process UP-regulated genes
+# (Use the filtered table to add additional columns such as ENTREZ IDs)
+table <- resl2fc_up  # Filtered data for UP-regulated genes
+table$entrez <- mapIds(org.Hs.eg.db, 
+                       keys = rownames(table), 
+                       keytype = "SYMBOL",
+                       column = "ENTREZID")  # Convert gene symbols to ENTREZ IDs
+length(na.exclude(table$entrez))  # Count genes with valid ENTREZ IDs
+openxlsx::write.xlsx(as.data.frame(table$entrez), file.path(outDir, "entrez_up.xlsx"))
+
+# Process DOWN-regulated genes
+table <- resl2fc_down  # Filtered data for DOWN-regulated genes
+table$entrez <- mapIds(org.Hs.eg.db, 
+                       keys = rownames(table), 
+                       keytype = "SYMBOL",
+                       column = "ENTREZID")  # Convert gene symbols to ENTREZ IDs
+length(na.exclude(table$entrez))  # Count genes with valid ENTREZ IDs
+openxlsx::write.xlsx(as.data.frame(table$entrez), file.path(outDir, "entrez_down.xlsx"))
+
+# Additional comments:
+# 1. Ensure that the file "Tempo_0h.xlsx" has the correct format and required columns.
+# 2. Review the thresholds for log2FoldChange (>1 and <-1). Adjust as needed based on study objectives.
+# 3. The `org.Hs.eg.db` package is used for identifier conversion. Make sure the gene symbols are valid.
+# 4. Consider making the code more modular if you need to reuse parts for different analyses.
